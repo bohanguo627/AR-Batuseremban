@@ -14,6 +14,77 @@ export enum Level {
   FIVE = 5
 }
 
+// New difficulty system types
+export enum DifficultyLevel {
+  BEGINNER = 'BEGINNER',
+  NORMAL = 'NORMAL',
+  MASTER = 'MASTER'
+}
+
+export interface DifficultyConfig {
+  id: DifficultyLevel;
+  airWindow: number; // Time window in seconds
+  tossHeight: 'low' | 'medium' | 'high';
+  allowRetry: boolean;
+  failureEndsGame: boolean;
+  showSlowMotion: boolean;
+  showGuideLine: boolean;
+  enableCombo: boolean;
+  culturalEasterEggs: 'none' | 'minimal' | 'full';
+}
+
+export interface ScoreData {
+  baseScore: number;
+  perfectBonus: number;
+  comboMultiplier: number;
+  totalScore: number;
+  failures: number;
+  perfectCycles: number;
+  maxCombo: number;
+}
+
+export interface ChallengeModifier {
+  id: string;
+  nameKey: string;
+  descKey: string;
+}
+
+export const DIFFICULTY_CONFIGS: Record<DifficultyLevel, DifficultyConfig> = {
+  [DifficultyLevel.BEGINNER]: {
+    id: DifficultyLevel.BEGINNER,
+    airWindow: 2.5,
+    tossHeight: 'low',
+    allowRetry: true,
+    failureEndsGame: false,
+    showSlowMotion: true,
+    showGuideLine: true,
+    enableCombo: false,
+    culturalEasterEggs: 'minimal'
+  },
+  [DifficultyLevel.NORMAL]: {
+    id: DifficultyLevel.NORMAL,
+    airWindow: 1.6,
+    tossHeight: 'medium',
+    allowRetry: false,
+    failureEndsGame: true, // ends level
+    showSlowMotion: false,
+    showGuideLine: false,
+    enableCombo: false,
+    culturalEasterEggs: 'full'
+  },
+  [DifficultyLevel.MASTER]: {
+    id: DifficultyLevel.MASTER,
+    airWindow: 1.1,
+    tossHeight: 'high',
+    allowRetry: false,
+    failureEndsGame: true, // ends entire game
+    showSlowMotion: false,
+    showGuideLine: false,
+    enableCombo: true,
+    culturalEasterEggs: 'none'
+  }
+}
+
 export interface TeamMember {
   name: string;
   role: string;

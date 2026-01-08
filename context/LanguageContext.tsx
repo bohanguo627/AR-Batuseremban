@@ -107,6 +107,45 @@ const translations = {
     msg_pick_4: "PICK ALL 4",
     msg_place_4: "PLACE 4 STONES",
     msg_exchange: "EXCHANGE STONE",
+    
+    // --- DIFFICULTY SYSTEM ---
+    diff_select_title: "Select Difficulty",
+    diff_beginner: "BEGINNER",
+    diff_normal: "NORMAL",
+    diff_master: "MASTER",
+    diff_beginner_desc: "Learn the basics with guidance. Slower pace, retry allowed, helpful hints.",
+    diff_normal_desc: "Traditional gameplay. Medium pace, cultural insights, ends on failure.",
+    diff_master_desc: "Challenge mode! Fast pace, combo scoring, leaderboard, no retries.",
+    diff_time_window: "Air Window",
+    diff_retry: "Retry on Fail",
+    diff_hints: "Helpful Hints",
+    diff_combo: "Combo System",
+    diff_start: "START",
+    
+    // --- SCORING ---
+    score_total: "Total Score",
+    score_base: "Base Score",
+    score_perfect: "Perfect Bonus",
+    score_combo: "Combo Multiplier",
+    score_failures: "Failures",
+    score_perfect_cycles: "Perfect Cycles",
+    score_max_combo: "Max Combo",
+    
+    // --- GAME STATES ---
+    game_retry: "RETRY",
+    game_slow_motion: "SLOW MOTION",
+    game_perfect: "PERFECT!",
+    game_combo: "COMBO",
+    game_follow_guide: "Follow the Guide!",
+    game_timbang: "TIMBANG! Catch all stones!",
+    
+    // --- CHALLENGE MODIFIERS ---
+    modifier_no_rearrange: "No Rearrange",
+    modifier_one_hand: "One Hand Only",
+    modifier_perfect_only: "Perfect Only",
+    modifier_no_rearrange_desc: "Cannot reorganize stones",
+    modifier_one_hand_desc: "Only use right side of screen",
+    modifier_perfect_only_desc: "Non-perfect resets combo",
   },
   bm: {
     // --- NAVIGATION & HOME (BM) ---
@@ -214,6 +253,45 @@ const translations = {
     msg_pick_4: "PUNGUT 4 BATU",
     msg_place_4: "LETAK 4 BATU",
     msg_exchange: "TUKAR BATU",
+    
+    // --- DIFFICULTY SYSTEM (BM) ---
+    diff_select_title: "Pilih Tahap Kesukaran",
+    diff_beginner: "PEMULA",
+    diff_normal: "BIASA",
+    diff_master: "MAHIR",
+    diff_beginner_desc: "Belajar asas dengan panduan. Perlahan, boleh cuba lagi, petunjuk membantu.",
+    diff_normal_desc: "Permainan tradisional. Sederhana, wawasan budaya, tamat jika gagal.",
+    diff_master_desc: "Mod cabaran! Pantas, sistem kombo, papan pendahulu, tiada percubaan semula.",
+    diff_time_window: "Masa Udara",
+    diff_retry: "Cuba Semula",
+    diff_hints: "Petunjuk",
+    diff_combo: "Sistem Kombo",
+    diff_start: "MULA",
+    
+    // --- SCORING (BM) ---
+    score_total: "Jumlah Skor",
+    score_base: "Skor Asas",
+    score_perfect: "Bonus Sempurna",
+    score_combo: "Pengganda Kombo",
+    score_failures: "Kegagalan",
+    score_perfect_cycles: "Kitaran Sempurna",
+    score_max_combo: "Kombo Maksimum",
+    
+    // --- GAME STATES (BM) ---
+    game_retry: "CUBA LAGI",
+    game_slow_motion: "GERAK PERLAHAN",
+    game_perfect: "SEMPURNA!",
+    game_combo: "KOMBO",
+    game_follow_guide: "Ikut Panduan!",
+    game_timbang: "TIMBANG! Sambut semua batu!",
+    
+    // --- CHALLENGE MODIFIERS (BM) ---
+    modifier_no_rearrange: "Tanpa Susun",
+    modifier_one_hand: "Satu Tangan",
+    modifier_perfect_only: "Sempurna Sahaja",
+    modifier_no_rearrange_desc: "Tidak boleh susun semula batu",
+    modifier_one_hand_desc: "Hanya guna sebelah kanan skrin",
+    modifier_perfect_only_desc: "Bukan sempurna reset kombo",
   }
 };
 
