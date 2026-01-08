@@ -344,6 +344,7 @@ const GameScene = ({
   level, 
   difficulty = DifficultyLevel.NORMAL,
   levels,
+  scoreData,
   onProgress, 
   onLevelComplete, 
   onFail, 
@@ -403,10 +404,16 @@ const GameScene = ({
     if ((gameState === GameState.IDLE || gameState === GameState.HOLDING || gameState === GameState.CAUGHT) && stonesInHand > 0) {
         setStonesInHand(s => s - 1);
         setGameState(GameState.TOSSING);
-        setStoneVel(new THREE.Vector3(0, 10, 0)); 
+        
+        // Adjust toss velocity based on difficulty toss height
+        const tossVelocity = difficultyConfig.tossHeight === 'low' ? 8 : 
+                            difficultyConfig.tossHeight === 'medium' ? 10 : 12;
+        setStoneVel(new THREE.Vector3(0, tossVelocity, 0)); 
         setActionPerformed(false);
         setMessage(""); 
         setCanToss(false);
+        setCycleStartTime(Date.now());
+        setIsPerfectCycle(true);
     }
   };
 
@@ -461,7 +468,10 @@ const GameScene = ({
 
       case GameState.TOSSING: case GameState.FALLING:
         let newVel = stoneVel.clone();
-        newVel.y += config.gravity * delta;
+        // Adjust gravity based on difficulty (slower fall for beginner)
+        const gravityMultiplier = difficulty === DifficultyLevel.BEGINNER ? 0.7 : 
+                                 difficulty === DifficultyLevel.NORMAL ? 1.0 : 1.3;
+        newVel.y += config.gravity * delta * gravityMultiplier;
         let newPos = stonePos.clone().add(newVel.clone().multiplyScalar(delta));
 
         if (newPos.x > 5) { newPos.x = 5; newVel.x *= -0.6; }
@@ -474,15 +484,72 @@ const GameScene = ({
 
         if (newVel.y < 0) setGameState(GameState.FALLING);
 
-        if (gameState === GameState.FALLING && newPos.distanceTo(handPos.current) < config.catchRadius) {
+        // Adjust catch radius based on difficulty
+        const adjustedCatchRadius = config.catchRadius * (difficulty === DifficultyLevel.BEGINNER ? 1.2 : 
+                                                          difficulty === DifficultyLevel.NORMAL ? 1.0 : 0.85);
+
+        if (gameState === GameState.FALLING && newPos.distanceTo(handPos.current) < adjustedCatchRadius) {
            if (currentStage && !actionPerformed) {
+              // Failed to perform action
               setMessage(t('game_missed'));
+              setIsPerfectCycle(false);
+              
+              // Handle based on difficulty
+              if (difficultyConfig.allowRetry) {
+                // Beginner: retry with slow motion
+                setShowSlowMotion(true);
+                setTimeout(() => {
+                  setShowSlowMotion(false);
+                  // Reset cycle but don't end game
+                  setStonesInHand(s => s + 1);
+                  setGameState(GameState.CAUGHT);
+                  setActionPerformed(false);
+                  setMessage(t('game_retry'));
+                }, 1000);
+              } else {
+                // Normal/Master: handle failure
+                onFail();
+                if (onScoreUpdate) {
+                  onScoreUpdate({ failures: scoreData.failures + 1 });
+                }
+              }
            } else {
-              setStonesInHand(s => s + 1); 
+              // Successfully performed action
+              setStonesInHand(s => s + 1);
+              
+              // Calculate score for this cycle
+              const cycleTime = (Date.now() - cycleStartTime) / 1000;
+              const isPerfect = isPerfectCycle && cycleTime <= difficultyConfig.airWindow * 0.8;
+              
+              if (difficultyConfig.enableCombo && isPerfect) {
+                const newCombo = comboCount + 1;
+                setComboCount(newCombo);
+                if (onScoreUpdate) {
+                  onScoreUpdate({ 
+                    maxCombo: Math.max(newCombo, scoreData.maxCombo),
+                    perfectCycles: scoreData.perfectCycles + 1
+                  });
+                }
+              }
+              
               const nextStageIndex = currentStageIndex + 1;
               if (nextStageIndex >= config.stages.length) {
                 setGameState(GameState.LEVEL_COMPLETE);
                 setMessage(t('game_level_complete'));
+                
+                // Add level completion bonus
+                if (onScoreUpdate) {
+                  const baseScore = 50;
+                  const perfectBonus = isPerfect ? 10 : 0;
+                  const comboMultiplier = Math.floor(comboCount / 5) * 0.5 + 1;
+                  onScoreUpdate({
+                    baseScore: scoreData.baseScore + baseScore,
+                    perfectBonus: scoreData.perfectBonus + perfectBonus,
+                    comboMultiplier: comboMultiplier,
+                    totalScore: scoreData.totalScore + (baseScore + perfectBonus) * comboMultiplier
+                  });
+                }
+                
                 onLevelComplete();
               } else {
                 setGameState(GameState.CAUGHT);
@@ -496,18 +563,32 @@ const GameScene = ({
         if (newPos.y < -6) {
           setGameState(GameState.DROPPED);
           setMessage(t('game_dropped'));
-          onFail();
-          setTimeout(() => {
-            const stage = config.stages[0];
-            setCurrentStageIndex(0);
-            setStonesOnGround(config.initialGroundStones);
-            setStonesInHand(config.initialHandStones);
-            setGameState(GameState.IDLE);
-            setMessage(t(stage.messageKey as any));
-            setActionPerformed(false);
-            setCanToss(true);
-            onProgress({ stage: 0, totalStages: config.stages.length });
-          }, 1500);
+          
+          if (difficultyConfig.allowRetry) {
+            // Beginner: retry without penalty
+            setTimeout(() => {
+              const stage = config.stages[currentStageIndex];
+              setStonesOnGround(config.initialGroundStones);
+              setStonesInHand(config.initialHandStones);
+              setGameState(GameState.IDLE);
+              setMessage(t('game_retry'));
+              setActionPerformed(false);
+              setCanToss(true);
+            }, 1500);
+          } else {
+            onFail();
+            setTimeout(() => {
+              const stage = config.stages[0];
+              setCurrentStageIndex(0);
+              setStonesOnGround(config.initialGroundStones);
+              setStonesInHand(config.initialHandStones);
+              setGameState(GameState.IDLE);
+              setMessage(t(stage.messageKey as any));
+              setActionPerformed(false);
+              setCanToss(true);
+              onProgress({ stage: 0, totalStages: config.stages.length });
+            }, 1500);
+          }
         }
         break;
     }
@@ -555,6 +636,20 @@ const GameScene = ({
           {canToss ? t('game_toss_action') : t('game_wait')}
       </Text>
       <Text position={[0, textY, 0]} fontSize={isMobile ? 0.5 : 0.5} color="white" anchorX="center" anchorY="middle">{message}</Text>
+      
+      {/* Combo Counter for Master Mode */}
+      {difficultyConfig.enableCombo && comboCount > 0 && (
+        <Text position={[3, 2.5, 0]} fontSize={0.4} color="#fbbf24" anchorX="center" anchorY="middle">
+          {t('game_combo')}: x{comboCount}
+        </Text>
+      )}
+      
+      {/* Slow Motion Indicator for Beginner Mode */}
+      {showSlowMotion && (
+        <Text position={[0, 3.5, 0]} fontSize={0.3} color="#86efac" anchorX="center" anchorY="middle">
+          {t('game_slow_motion')}
+        </Text>
+      )}
     </>
   );
 };
@@ -682,6 +777,7 @@ const Game: React.FC<{ onGameOver: () => void; onExit: () => void }> = ({ onGame
                 level={level}
                 difficulty={difficulty}
                 levels={levels}
+                scoreData={scoreData}
                 onProgress={setProgress} 
                 onLevelComplete={handleLevelComplete} 
                 onFail={() => {}} 
