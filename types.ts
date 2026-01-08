@@ -3,7 +3,16 @@ export enum GameState {
   TOSSING = 'TOSSING',
   FALLING = 'FALLING',
   CAUGHT = 'CAUGHT',
-  DROPPED = 'DROPPED'
+  DROPPED = 'DROPPED',
+  LEVEL_COMPLETE = 'LEVEL_COMPLETE',
+  GAME_OVER = 'GAME_OVER',
+  TIMBANG = 'TIMBANG' // 新增称重环节状态
+}
+
+export enum Difficulty {
+  NOVICE = 'NOVICE',
+  NORMAL = 'NORMAL',
+  MASTER = 'MASTER'
 }
 
 export enum Level {
@@ -11,7 +20,10 @@ export enum Level {
   TWO = 2,
   THREE = 3,
   FOUR = 4,
-  FIVE = 5
+  FIVE = 5,
+  SIX = 6,
+  SEVEN = 7,
+  EIGHT = 8
 }
 
 export interface TeamMember {
@@ -29,6 +41,7 @@ export interface ChatMessage {
   followUpQuestions?: string[];
 }
 
+// ... (保持 TEAM_MEMBERS 不变)
 export const TEAM_MEMBERS: TeamMember[] = [
   { name: "Gan Shu Xian", role: "Project Director", matric: "24004577" },
   { name: "Natasya Beatrisya", role: "AR Development Lead", matric: "23002630" },
