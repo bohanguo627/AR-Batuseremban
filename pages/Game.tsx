@@ -2,14 +2,14 @@
 import React, { useRef, useState, useEffect, useMemo, Suspense } from 'react';
 import Webcam from 'react-webcam';
 import { Canvas, useFrame, useThree, useLoader } from '@react-three/fiber';
-import { Cylinder, Sphere, Float, Text, Loader } from '@react-three/drei';
+import { Cylinder, Sphere, Float, Text, Loader, Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import { OBJLoader } from 'three-stdlib';
 import { useLanguage } from '../context/LanguageContext';
-import { GameState, Difficulty } from '../types'; // 确保引入了 Difficulty
+import { GameState, Difficulty, DifficultyConfig, LevelConfig } from '../types';
 
-// --- Configuration ---
+// --- Configuration Constants ---
 const MOBILE_CONSTRAINTS = {
   facingMode: "environment",
   width: { ideal: 1280 },
@@ -22,60 +22,66 @@ const DESKTOP_CONSTRAINTS = {
   facingMode: "user"
 };
 
-const PICKUP_THRESHOLD_Y = -2.0; 
-const RELOAD_THRESHOLD_Y = -1.0; 
-const TOSS_THRESHOLD_Y = 0.5; 
-
 // 难度参数表
-const DIFFICULTY_CONFIG = {
+const DIFFICULTY_SETTINGS: Record<Difficulty, DifficultyConfig> = {
   [Difficulty.NOVICE]: {
     airWindow: 2.5,
-    gravity: -8, // 较轻的重力，滞空长
-    scoreMultiplier: 0,
-    failPenalty: 'RETRY_CYCLE', // 新手失败只重试当前Cycle
-    canSortStones: true
+    gravity: -8,     // 抛得低且慢
+    autoScatter: true,
+    failConsequence: 'RETRY_CYCLE',
+    showGuideLines: true,
+    comboMultiplier: false,
+    allowCorrection: true
   },
   [Difficulty.NORMAL]: {
     airWindow: 1.6,
-    gravity: -15, // 标准重力
-    scoreMultiplier: 1,
-    failPenalty: 'RESTART_LEVEL', // 普通失败重开关卡
-    canSortStones: false
+    gravity: -15,    // 正常重力
+    autoScatter: false, // 半开（逻辑待定，这里简化为false）
+    failConsequence: 'RESTART_LEVEL', // 失败重来本关
+    showGuideLines: false,
+    comboMultiplier: true,
+    allowCorrection: false
   },
   [Difficulty.MASTER]: {
     airWindow: 1.1,
-    gravity: -25, // 极强重力，极快下落
-    scoreMultiplier: 2,
-    failPenalty: 'GAME_OVER', // 大师失败直接结束
-    canSortStones: false
+    gravity: -22,    // 抛得高且快（重力大意味着回落快）
+    autoScatter: false,
+    failConsequence: 'GAME_OVER', // 失败直接结算
+    showGuideLines: false,
+    comboMultiplier: true,
+    allowCorrection: false
   }
 };
 
-interface StageConfig { action: 'PICK' | 'PLACE' | 'EXCHANGE'; count: number; messageKey: string; }
-
-interface LevelConfig { 
-    id: number; 
-    name: string; 
-    stages: StageConfig[]; 
-    catchRadius: number; 
-    initialHandStones: number; 
-    initialGroundStones: number; 
-    isExchangeLevel?: boolean; 
-}
-
-// 关卡配置 (逻辑结构)
-const LEVELS: Record<number, LevelConfig> = {
-  1: { id: 1, name: "BUAH SATU", stages: [{ action: 'PICK', count: 1, messageKey: "msg_pick_1" }, { action: 'PICK', count: 1, messageKey: "msg_pick_1" }, { action: 'PICK', count: 1, messageKey: "msg_pick_1" }, { action: 'PICK', count: 1, messageKey: "msg_pick_1" }], catchRadius: 5.0, initialHandStones: 1, initialGroundStones: 4 },
-  2: { id: 2, name: "BUAH DUA", stages: [{ action: 'PICK', count: 2, messageKey: "msg_pick_2" }, { action: 'PICK', count: 2, messageKey: "msg_pick_2" }], catchRadius: 4.5, initialHandStones: 1, initialGroundStones: 4 },
-  3: { id: 3, name: "BUAH TIGA", stages: [{ action: 'PICK', count: 1, messageKey: "msg_pick_1" }, { action: 'PICK', count: 3, messageKey: "msg_pick_3" }], catchRadius: 4.0, initialHandStones: 1, initialGroundStones: 4 },
-  4: { id: 4, name: "BUAH EMPAT", stages: [{ action: 'PICK', count: 4, messageKey: "msg_pick_4" }], catchRadius: 3.8, initialHandStones: 1, initialGroundStones: 4 },
-  5: { id: 5, name: "BUAH LIMA", stages: [{ action: 'PLACE', count: 4, messageKey: "msg_place_4" }, { action: 'PICK', count: 4, messageKey: "msg_pick_4" }], catchRadius: 3.8, initialHandStones: 5, initialGroundStones: 0 },
-  6: { id: 6, name: "TUKAR", stages: [{ action: 'EXCHANGE', count: 1, messageKey: "msg_exchange" }, { action: 'EXCHANGE', count: 1, messageKey: "msg_exchange" }, { action: 'EXCHANGE', count: 1, messageKey: "msg_exchange" }], catchRadius: 3.5, initialHandStones: 2, initialGroundStones: 3, isExchangeLevel: true },
-  7: { id: 7, name: "BUAH TUJUH", stages: [{ action: 'EXCHANGE', count: 1, messageKey: "msg_exchange" }, { action: 'PICK', count: 3, messageKey: "msg_pick_3" }], catchRadius: 3.2, initialHandStones: 2, initialGroundStones: 3, isExchangeLevel: true },
-  8: { id: 8, name: "BUAH LAPAN", stages: [{ action: 'PICK', count: 1, messageKey: "msg_pick_1" }, { action: 'PICK', count: 4, messageKey: "msg_pick_4" }], catchRadius: 3.0, initialHandStones: 0, initialGroundStones: 5 },
+// 关卡设计表
+const GAME_LEVELS: Record<Difficulty, LevelConfig[]> = {
+  [Difficulty.NOVICE]: [
+    { id: 1, name: "Novice 1: Pick 1", stages: Array(4).fill({ action: 'PICK', count: 1, messageKey: "msg_pick_1" }), initialHandStones: 1, initialGroundStones: 4 },
+    { id: 2, name: "Novice 2: Pick 2", stages: Array(2).fill({ action: 'PICK', count: 2, messageKey: "msg_pick_2" }), initialHandStones: 1, initialGroundStones: 4 },
+    { id: 3, name: "Novice 3: Pick 4", stages: [{ action: 'PICK', count: 4, messageKey: "msg_pick_4" }], initialHandStones: 1, initialGroundStones: 4 }
+  ],
+  [Difficulty.NORMAL]: [
+    { id: 1, name: "Buah Satu", stages: Array(4).fill({ action: 'PICK', count: 1, messageKey: "msg_pick_1" }), initialHandStones: 1, initialGroundStones: 4 },
+    { id: 2, name: "Buah Dua", stages: Array(2).fill({ action: 'PICK', count: 2, messageKey: "msg_pick_2" }), initialHandStones: 1, initialGroundStones: 4 },
+    { id: 3, name: "Buah Tiga", stages: [{ action: 'PICK', count: 1, messageKey: "msg_pick_1" }, { action: 'PICK', count: 3, messageKey: "msg_pick_3" }], initialHandStones: 1, initialGroundStones: 4 },
+    { id: 4, name: "Buah Empat", stages: [{ action: 'PICK', count: 4, messageKey: "msg_pick_4" }], initialHandStones: 1, initialGroundStones: 4 },
+    { id: 5, name: "Buah Lima", stages: [{ action: 'PLACE', count: 4, messageKey: "msg_place_4" }, { action: 'PICK', count: 4, messageKey: "msg_pick_4" }], initialHandStones: 5, initialGroundStones: 0 },
+    { id: 6, name: "Tukar (Simplified)", stages: Array(3).fill({ action: 'EXCHANGE', count: 1, messageKey: "msg_exchange" }), initialHandStones: 2, initialGroundStones: 3, isExchangeLevel: true }
+  ],
+  [Difficulty.MASTER]: [
+    // 大师模式复用普通模式关卡，但使用大师级物理参数
+    { id: 1, name: "Master Buah Satu", stages: Array(4).fill({ action: 'PICK', count: 1, messageKey: "msg_pick_1" }), initialHandStones: 1, initialGroundStones: 4 },
+    { id: 2, name: "Master Buah Dua", stages: Array(2).fill({ action: 'PICK', count: 2, messageKey: "msg_pick_2" }), initialHandStones: 1, initialGroundStones: 4 },
+    { id: 3, name: "Master Buah Tiga", stages: [{ action: 'PICK', count: 1, messageKey: "msg_pick_1" }, { action: 'PICK', count: 3, messageKey: "msg_pick_3" }], initialHandStones: 1, initialGroundStones: 4 },
+    { id: 4, name: "Master Buah Empat", stages: [{ action: 'PICK', count: 4, messageKey: "msg_pick_4" }], initialHandStones: 1, initialGroundStones: 4 },
+    { id: 5, name: "Master Buah Lima", stages: [{ action: 'PLACE', count: 4, messageKey: "msg_place_4" }, { action: 'PICK', count: 4, messageKey: "msg_pick_4" }], initialHandStones: 5, initialGroundStones: 0 },
+    // 大师挑战增加 Tukar
+    { id: 6, name: "Master Tukar", stages: Array(3).fill({ action: 'EXCHANGE', count: 1, messageKey: "msg_exchange" }), initialHandStones: 2, initialGroundStones: 3, isExchangeLevel: true }
+  ]
 };
 
-// ... (UseMediaPipeInput hook 保持不变，可以直接复制原来的) ...
+// --- Models & Hooks ---
+
 const useMediaPipeInput = (webcamRef: React.RefObject<Webcam>, isMobile: boolean, facingMode: string) => {
   const handPos = useRef(new THREE.Vector3(0, -3, 0)); 
   const isPinching = useRef(false);
@@ -86,7 +92,9 @@ const useMediaPipeInput = (webcamRef: React.RefObject<Webcam>, isMobile: boolean
   useEffect(() => {
     const setupModel = async () => {
       try {
-        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm");
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+        );
         landmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
@@ -107,35 +115,42 @@ const useMediaPipeInput = (webcamRef: React.RefObject<Webcam>, isMobile: boolean
 
   useFrame(() => {
     if (!landmarkerRef.current || !webcamRef.current?.video || webcamRef.current.video.readyState !== 4) return;
+
     const video = webcamRef.current.video;
     if (video.currentTime !== lastVideoTime.current) {
       lastVideoTime.current = video.currentTime;
       const result = landmarkerRef.current.detectForVideo(video, performance.now());
+
       if (result.landmarks && result.landmarks.length > 0) {
         const landmarks = result.landmarks[0];
         const sensitivity = 2.5; 
         let xMultiplier = viewport.width * sensitivity; 
         let yMultiplier = viewport.height * sensitivity; 
+
         let x;
         if (facingMode === 'user') {
              x = -(landmarks[8].x - 0.5) * xMultiplier;
         } else {
              x = (landmarks[8].x - 0.5) * xMultiplier; 
         }
+
         let y = -(landmarks[8].y - 0.55) * yMultiplier; 
+
         x = Math.max(-viewport.width/2 + 0.5, Math.min(viewport.width/2 - 0.5, x));
         y = Math.max(-viewport.height/2 + 0.5, Math.min(viewport.height/2 - 0.5, y));
+
         handPos.current.lerp(new THREE.Vector3(x, y, 0), 0.8); 
+
         const dx = landmarks[4].x - landmarks[8].x;
         const dy = landmarks[4].y - landmarks[8].y;
         isPinching.current = Math.sqrt(dx*dx + dy*dy) < 0.08;
       }
     }
   });
+
   return { handPos, isPinching };
 };
 
-// ... (BatuModel, MannequinHand, BatuSandbag, GroundStones 保持不变) ...
 const BatuModel = ({ color, scale = 1, opacity = 1 }: { color: string, scale?: number, opacity?: number }) => {
   const obj = useLoader(OBJLoader, '/models/white_mesh.obj') as THREE.Group;
   const clone = useMemo(() => {
@@ -143,7 +158,13 @@ const BatuModel = ({ color, scale = 1, opacity = 1 }: { color: string, scale?: n
     c.traverse((child: any) => {
       if (child.isMesh) {
         child.material = new THREE.MeshStandardMaterial({
-          color: color, roughness: 0.5, metalness: 0.1, transparent: opacity < 1, opacity: opacity, emissive: color, emissiveIntensity: 0.4
+          color: color,
+          roughness: 0.5, 
+          metalness: 0.1,
+          transparent: opacity < 1,
+          opacity: opacity,
+          emissive: color,
+          emissiveIntensity: 0.4
         });
       }
     });
@@ -152,79 +173,113 @@ const BatuModel = ({ color, scale = 1, opacity = 1 }: { color: string, scale?: n
   return <primitive object={clone} scale={[scale, scale, scale]} />;
 };
 
-// (此处为了节省篇幅，省略 MannequinHand, BatuSandbag, GroundStones 的具体代码，请保留原文件中的实现)
-// 假设 MannequinHand, BatuSandbag, GroundStones 组件已经在此处定义...
 const MannequinHand = ({ position, stonesInHand, isGrabbing, canToss, isMobile, isExchangeLevel = false }: any) => {
-    // ... 复制原来的 MannequinHand 代码 ...
-    return <group position={position}><Sphere args={[0.5]}><meshStandardMaterial color="orange"/></Sphere></group>; // Placeholder if needed
+  const group = useRef<THREE.Group>(null);
+  const skinColor = isGrabbing ? "#86efac" : (canToss ? "#ffffff" : "#eecfad");
+
+  useFrame(() => {
+    if(group.current) {
+      group.current.position.copy(position);
+      group.current.rotation.z = -position.x * 0.1;
+      const targetRot = isGrabbing ? -0.8 : 0;
+      group.current.rotation.x = THREE.MathUtils.lerp(group.current.rotation.x, targetRot, 0.4);
+      const scale = isMobile ? 1.2 : 1.4;
+      group.current.scale.set(scale, scale, scale);
+    }
+  });
+
+  // 简化的手指渲染，实际项目中可复用之前的完整代码
+  return (
+    <group ref={group}>
+        <Sphere args={[0.6, 16, 16]} position={[0, 0, 0]}><meshStandardMaterial color={skinColor} /></Sphere>
+        {stonesInHand > 0 && Array.from({ length: stonesInHand }).map((_, i) => {
+             const stoneColor = (isExchangeLevel && i === 0) ? "#ec4899" : "#fbbf24";
+             return (
+                <group key={i} position={[-0.2 + i * 0.15, 0.4, 0.3]} rotation={[0, 0, Math.random()]}>
+                    <BatuModel color={stoneColor} scale={0.2} />
+                </group>
+             );
+        })}
+    </group>
+  );
 };
-const BatuSandbag = ({ position, rotation }: any) => <group position={position} rotation={rotation}><Sphere args={[0.2]}><meshStandardMaterial color="red"/></Sphere></group>;
-const GroundStones = ({ count, isExchangeLevel, pinkCount }: any) => <group position={[0,-3.5,-1]}></group>;
 
+// 引导线组件（新手模式）
+const GuideLine = ({ start, end }: { start: THREE.Vector3, end: THREE.Vector3 }) => {
+  return <Line points={[start, end]} color="#3b82f6" lineWidth={3} dashed={true} opacity={0.7} transparent />;
+};
 
-const GameScene = ({ webcamRef, level, difficulty, onProgress, onLevelComplete, onFail, onScoreUpdate, isMobile, manualTossRef, facingMode }: any) => {
+const GroundStones = ({ count, isExchangeLevel = false }: { count: number, isExchangeLevel?: boolean }) => (
+    <group position={[0, -3.5, -1]}>
+      {Array.from({ length: count }).map((_, i) => (
+         <group key={i} position={[(i - (count - 1) / 2) * 1.3, 0, 0]}>
+             <BatuModel color={isExchangeLevel && i===0 ? "#ec4899" : "#52525b"} scale={0.4} />
+         </group>
+      ))}
+    </group>
+);
+
+// --- Game Logic ---
+
+const GameScene = ({ 
+    webcamRef, 
+    difficulty, 
+    levelIndex, 
+    onScoreUpdate, 
+    onFail, 
+    onLevelComplete,
+    isMobile, 
+    manualTossRef, 
+    facingMode,
+    score
+}: any) => {
   const { handPos, isPinching } = useMediaPipeInput(webcamRef, isMobile, facingMode);
-  const config = LEVELS[level as number];
-  const diffConfig = DIFFICULTY_CONFIG[difficulty as Difficulty];
   
+  const diffConfig = DIFFICULTY_SETTINGS[difficulty as Difficulty];
+  const levelList = GAME_LEVELS[difficulty as Difficulty];
+  const levelConfig = levelList[levelIndex];
+
   const { t } = useLanguage();
   
-  const [gameState, setGameState] = useState<GameState>(GameState.IDLE);
+  const [gameState, setGameState] = useState<GameState>(GameState.SETUP);
   const [stonePos, setStonePos] = useState(new THREE.Vector3());
   const [stoneVel, setStoneVel] = useState(new THREE.Vector3());
-  const [stoneRot, setStoneRot] = useState(new THREE.Euler());
-  const [message, setMessage] = useState("Scan Hand...");
+  const [message, setMessage] = useState("");
+  
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [stonesOnGround, setStonesOnGround] = useState(0);
   const [stonesInHand, setStonesInHand] = useState(0);
-  const [actionPerformed, setActionPerformed] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
-  const [canToss, setCanToss] = useState(true);
   
-  // 计分相关
+  // Timer & Mechanics
+  const [airTimer, setAirTimer] = useState(0);
+  const [actionPerformed, setActionPerformed] = useState(false);
   const [combo, setCombo] = useState(0);
-  const [cycleStartTime, setCycleStartTime] = useState(0);
 
+  // Setup Level
   useEffect(() => {
-    if (!hasStarted && handPos.current.y > -2.9) {
-        setHasStarted(true);
-        setMessage(t(config.stages[0].messageKey as any));
-    } else if (!hasStarted) {
-        setMessage(t('game_scan'));
+    if (gameState === GameState.SETUP || gameState === GameState.LEVEL_COMPLETE) {
+      // Initialize Level
+      setStonesOnGround(levelConfig.initialGroundStones);
+      setStonesInHand(levelConfig.initialHandStones);
+      setCurrentStageIndex(0);
+      setCombo(0);
+      setActionPerformed(false);
+      setMessage(t(levelConfig.stages[0].messageKey as any));
+      
+      // Auto transition to IDLE
+      setTimeout(() => setGameState(GameState.IDLE), 1000);
     }
-  }, [handPos.current.y, t, config, hasStarted]);
-
-  useEffect(() => {
-    const stage = config.stages[0];
-    setCurrentStageIndex(0);
-    setStonesOnGround(config.initialGroundStones);
-    setStonesInHand(config.initialHandStones);
-    setGameState(GameState.IDLE);
-    setMessage(t(stage.messageKey as any));
-    setActionPerformed(false);
-    setCanToss(true);
-    setCombo(0); // 新关卡重置Combo
-    onProgress({ stage: 0, totalStages: config.stages.length });
-  }, [level, config, t]);
-
-  const currentStage = config.stages[currentStageIndex];
+  }, [levelConfig, gameState]);
 
   const triggerToss = () => {
-    if ((gameState === GameState.IDLE || gameState === GameState.HOLDING || gameState === GameState.CAUGHT) && stonesInHand > 0) {
-        setStonesInHand(s => s - 1);
+    if (gameState === GameState.IDLE && stonesInHand > 0) {
         setGameState(GameState.TOSSING);
-        
-        // 计算初始速度：v0 = (gravity * time) / 2 的反向
-        // 确保滞空时间 total time = airWindow
-        const totalAirTime = diffConfig.airWindow;
-        const g = Math.abs(diffConfig.gravity);
-        const vy = (g * totalAirTime) / 2;
-        
-        setStoneVel(new THREE.Vector3(0, vy, 0)); 
+        // Ibu (母石) 抛起
+        setStonesInHand(s => s - 1);
+        setStoneVel(new THREE.Vector3(0, -diffConfig.gravity * 0.8, 0)); // 向上抛的初速度 (简单物理模拟)
+        setAirTimer(diffConfig.airWindow);
         setActionPerformed(false);
-        setMessage(""); 
-        setCanToss(false);
-        setCycleStartTime(performance.now());
+        setMessage("");
     }
   };
 
@@ -232,276 +287,277 @@ const GameScene = ({ webcamRef, level, difficulty, onProgress, onLevelComplete, 
     if (manualTossRef.current) manualTossRef.current.onclick = triggerToss;
   }, [gameState, stonesInHand]);
 
-  useFrame((_, delta) => {
-    if (gameState === GameState.LEVEL_COMPLETE || gameState === GameState.GAME_OVER) return;
+  useFrame((state, delta) => {
+      if (gameState === GameState.GAME_OVER || gameState === GameState.LEVEL_COMPLETE) return;
 
-    // Reload Logic
-    if (!canToss && handPos.current.y < RELOAD_THRESHOLD_Y && gameState === GameState.IDLE) setCanToss(true);
-    
-    // Auto Toss (Optional, mostly manual now)
-    if (canToss && handPos.current.y > TOSS_THRESHOLD_Y && stonesInHand > 0 && gameState === GameState.IDLE) triggerToss();
+      // 1. Update Ibu Stone Physics
+      if (gameState === GameState.TOSSING || gameState === GameState.ACTION_WINDOW) {
+          const newVel = stoneVel.clone();
+          newVel.y += diffConfig.gravity * delta; // 施加重力
+          const newPos = stonePos.clone().add(newVel.clone().multiplyScalar(delta));
+          
+          setStoneVel(newVel);
+          setStonePos(newPos);
 
-    // Interaction Window Logic
-    if ((gameState === GameState.TOSSING || gameState === GameState.FALLING) && handPos.current.y < PICKUP_THRESHOLD_Y && !actionPerformed) {
-      // 判定逻辑
-      let success = false;
-      if (currentStage.action === 'PICK' && stonesOnGround >= currentStage.count) {
-        setStonesOnGround(s => s - currentStage.count);
-        setStonesInHand(s => s + currentStage.count);
-        success = true;
-      } else if (currentStage.action === 'PLACE' && stonesInHand >= currentStage.count) {
-        setStonesOnGround(s => s + currentStage.count);
-        setStonesInHand(s => s - currentStage.count);
-        success = true;
-      } else if (currentStage.action === 'EXCHANGE') {
-        success = true; // 简化：只要下去就算交换成功（Demo）
+          // 转为 ACTION_WINDOW (当开始下落时)
+          if (gameState === GameState.TOSSING && newVel.y < 0) {
+              setGameState(GameState.ACTION_WINDOW);
+          }
+      } else if (gameState === GameState.IDLE) {
+          // 手持母石跟随手部
+          const holdPos = handPos.current.clone().add(new THREE.Vector3(0, 0.5, 0.2));
+          setStonePos(holdPos);
       }
-      
-      if(success) setActionPerformed(true);
-    }
 
-    switch (gameState) {
-      case GameState.IDLE: case GameState.HOLDING: case GameState.CAUGHT:
-        const holdPos = handPos.current.clone().add(new THREE.Vector3(0, 0.6, 0.2));
-        setStonePos(holdPos);
-        if (gameState === GameState.CAUGHT) setTimeout(() => setGameState(GameState.IDLE), 200); 
-        break;
+      // 2. Action Window Logic (Pick / Place / Exchange)
+      if (gameState === GameState.ACTION_WINDOW) {
+          setAirTimer(prev => prev - delta);
 
-      case GameState.TOSSING: case GameState.FALLING:
-        let newVel = stoneVel.clone();
-        newVel.y += diffConfig.gravity * delta; // 使用难度配置的重力
-        let newPos = stonePos.clone().add(newVel.clone().multiplyScalar(delta));
+          // 超时判定
+          if (airTimer <= 0) {
+              handleFail("TIMEOUT");
+              return;
+          }
 
-        // 简单的墙壁反弹
-        if (newPos.x > 5) { newPos.x = 5; newVel.x *= -0.6; }
-        else if (newPos.x < -5) { newPos.x = -5; newVel.x *= -0.6; }
-        
-        setStoneVel(newVel);
-        setStonePos(newPos);
-        setStoneRot(new THREE.Euler(stoneRot.x + delta * 5, stoneRot.y + delta * 3, 0));
+          const stage = levelConfig.stages[currentStageIndex];
+          
+          // MVP 拾取逻辑：当手部足够低 (-2.0) 且捏合时触发
+          // 实际逻辑应检查碰撞具体的地面石子，这里简化
+          if (!actionPerformed && handPos.current.y < -2.0 && isPinching.current) {
+              if (stage.action === 'PICK' && stonesOnGround >= stage.count) {
+                  setStonesOnGround(s => s - stage.count);
+                  setStonesInHand(s => s + stage.count);
+                  setActionPerformed(true);
+                  // 视觉反馈...
+              } else if (stage.action === 'PLACE') {
+                  setStonesOnGround(s => s + stage.count);
+                  setStonesInHand(s => s - stage.count);
+                  setActionPerformed(true);
+              } else if (stage.action === 'EXCHANGE') {
+                   // 交换逻辑
+                   setActionPerformed(true);
+              }
+          }
 
-        if (newVel.y < 0) setGameState(GameState.FALLING);
+          // 接住判定 (Catch)
+          // 只有在 Action 完成后，且 母石落回手附近
+          if (stonePos.distanceTo(handPos.current) < 1.2 && stoneVel.y < 0) {
+              if (actionPerformed) {
+                  handleSuccess();
+              } else {
+                  // 接住了但没做动作 -> 失败
+                  handleFail("MISSED_ACTION");
+              }
+          }
+      }
 
-        // 接住判定
-        if (gameState === GameState.FALLING && newPos.distanceTo(handPos.current) < config.catchRadius) {
-           if (!actionPerformed) {
-              // 没完成动作就接住 -> 失败
-              handleFail(t('game_missed_action'));
-           } else {
-              // 成功接住 -> 计算分数
-              handleSuccess();
-           }
-        }
-        
-        // 掉落判定
-        if (newPos.y < -6) {
-          handleFail(t('game_dropped'));
-        }
-        break;
-    }
+      // 3. 掉落判定
+      if (stonePos.y < -6 && gameState !== GameState.DROPPED) {
+          handleFail("DROPPED");
+      }
   });
 
   const handleSuccess = () => {
-      // 计分逻辑
+      setGameState(GameState.CAUGHT);
+      setStonesInHand(s => s + 1); // 加回母石
+      
+      // 计分
       let points = 10;
-      
-      // Perfect 判定 (剩余时间 > 20%? 这里简化为看是否还有多余的高度)
-      const isPerfect = stonePos.y > 0; // 如果接住时位置还比较高，算Perfect（简化）
-      if (isPerfect) points += 10;
-      
-      // Combo 计算
-      let newCombo = combo + 1;
-      let multiplier = 1;
-      if (newCombo >= 20) multiplier = 3;
-      else if (newCombo >= 10) multiplier = 2;
-      else if (newCombo >= 5) multiplier = 1.5;
-      
-      if (difficulty === Difficulty.MASTER && !isPerfect) {
-          newCombo = 0; // 大师模式必须Perfect才涨Combo
+      // 大师模式连击逻辑
+      if (diffConfig.comboMultiplier) {
+          const multiplier = combo >= 20 ? 3 : (combo >= 10 ? 2 : (combo >= 5 ? 1.5 : 1));
+          points = points * multiplier;
+          setCombo(c => c + 1);
       }
-      setCombo(newCombo);
-      onScoreUpdate(points * multiplier);
+      onScoreUpdate(points);
 
-      setStonesInHand(s => s + 1); 
-      const nextStageIndex = currentStageIndex + 1;
-      if (nextStageIndex >= config.stages.length) {
-        setGameState(GameState.LEVEL_COMPLETE);
-        setMessage(t('game_level_complete'));
-        onLevelComplete();
+      // Check Stage / Level
+      if (currentStageIndex + 1 >= levelConfig.stages.length) {
+          // 关卡完成
+          onScoreUpdate(50); // 关卡通关分
+          setTimeout(() => onLevelComplete(), 500);
       } else {
-        setGameState(GameState.CAUGHT);
-        setCurrentStageIndex(nextStageIndex);
-        setMessage(t(config.stages[nextStageIndex].messageKey as any));
-        setActionPerformed(false); 
-        onProgress({ stage: nextStageIndex, totalStages: config.stages.length });
+          // 下一个 Cycle
+          setCurrentStageIndex(prev => prev + 1);
+          setMessage(t('game_good'));
+          setTimeout(() => setGameState(GameState.IDLE), 500);
       }
   };
 
-  const handleFail = (failMsg: string) => {
-      setMessage(failMsg);
+  const handleFail = (reason: string) => {
+      setGameState(GameState.DROPPED);
+      setMessage(reason === "TIMEOUT" ? "Time Out!" : "Missed!");
       
-      if (diffConfig.failPenalty === 'GAME_OVER') {
-          setGameState(GameState.GAME_OVER);
-          onFail(true); // IsFatal
-      } else if (diffConfig.failPenalty === 'RESTART_LEVEL') {
-          setGameState(GameState.DROPPED);
-          onFail(false);
-          // 重置本关
+      onFail(); // 父组件处理
+
+      if (diffConfig.failConsequence === 'RETRY_CYCLE') {
+          // 新手：重试当前 Cycle
+          // 恢复地面石子状态（简单粗暴处理：恢复到本Stage开始前状态）
+          // 这里简化为：直接重置回IDLE，状态回滚需要更多变量记录，这里略过复杂回滚
           setTimeout(() => {
-            resetLevel();
-          }, 1500);
-      } else {
-          // NOVICE: RETRY CYCLE
-          setGameState(GameState.DROPPED);
-          setTimeout(() => {
-              // 重试当前Cycle，不重置整个关卡
               setGameState(GameState.IDLE);
-              setStonesInHand(s => s + 1); // 假装捡回来了
+              setStonesInHand(s => s + 1); // 假装捡回母石
               setActionPerformed(false);
-              setCanToss(true);
-              setMessage(t('game_retry'));
+              setMessage("Try Again");
           }, 1500);
+      } else if (diffConfig.failConsequence === 'RESTART_LEVEL') {
+          // 普通：重来本关
+          setTimeout(() => {
+              setGameState(GameState.SETUP);
+          }, 1500);
+      } else {
+          // 大师：结束游戏
+          setGameState(GameState.GAME_OVER);
       }
   };
 
-  const resetLevel = () => {
-    const stage = config.stages[0];
-    setCurrentStageIndex(0);
-    setStonesOnGround(config.initialGroundStones);
-    setStonesInHand(config.initialHandStones);
-    setGameState(GameState.IDLE);
-    setMessage(t(stage.messageKey as any));
-    setActionPerformed(false);
-    setCanToss(true);
-    setCombo(0);
-    onProgress({ stage: 0, totalStages: config.stages.length });
-  };
-
-  // ... (渲染部分，加入 Combo 显示等)
   return (
     <>
-      <ambientLight intensity={2.0} />
-      <pointLight position={[10, 10, 10]} color="#fbbf24" intensity={1.5} />
-      <directionalLight position={[0, 5, 5]} intensity={1} />
+      <ambientLight intensity={1.5} />
+      <pointLight position={[10, 10, 10]} />
 
-      <MannequinHand position={handPos.current} stonesInHand={stonesInHand-1} isGrabbing={isPinching.current} canToss={canToss} isMobile={isMobile} />
+      <MannequinHand 
+        position={handPos.current} 
+        stonesInHand={stonesInHand} 
+        isGrabbing={isPinching.current} 
+        canToss={gameState === GameState.IDLE} 
+        isMobile={isMobile} 
+        isExchangeLevel={levelConfig.isExchangeLevel}
+      />
       
-      {gameState !== GameState.DROPPED && stonesInHand > 0 && <BatuSandbag position={stonePos} rotation={stoneRot} />}
-      
-      <GroundStones count={stonesOnGround} isExchangeLevel={config.isExchangeLevel} pinkCount={currentStageIndex} />
+      {(gameState !== GameState.DROPPED) && stonesInHand > 0 && gameState !== GameState.SETUP && (
+         <group position={stonePos}>
+            <BatuModel color="#ffffff" scale={1.2} />
+         </group>
+      )}
 
-      {/* UI Texts */}
-      <Text position={[0, isMobile?0:3.5, 0]} fontSize={0.5} color="white">{message}</Text>
-      {/* Combo Display */}
-      {combo > 1 && (
-          <Text position={[2, 3, 0]} fontSize={0.4} color="#facc15">
-              {combo} COMBO!
+      <GroundStones count={stonesOnGround} isExchangeLevel={levelConfig.isExchangeLevel} />
+
+      {/* 新手引导线: 只有在动作窗口期，且未完成动作时显示 */}
+      {diffConfig.showGuideLines && gameState === GameState.ACTION_WINDOW && !actionPerformed && (
+          <GuideLine start={stonePos} end={new THREE.Vector3(0, -2, 0)} />
+      )}
+
+      {/* UI Overlay in 3D */}
+      <Text position={[0, 3.5, 0]} fontSize={0.4} color="white" outlineWidth={0.02}>{message}</Text>
+      
+      {gameState === GameState.ACTION_WINDOW && (
+          <Text position={[0, 2.5, 0]} fontSize={0.3} color={airTimer < 0.5 ? "red" : "#fbbf24"}>
+              {airTimer.toFixed(1)}s
           </Text>
       )}
     </>
   );
 };
 
-// --- Main Game Component ---
-const Game: React.FC<{ onGameOver: () => void; onExit: () => void }> = ({ onGameOver, onExit }) => {
+const Game: React.FC<{ onExit: () => void }> = ({ onExit }) => {
   const webcamRef = useRef<Webcam>(null);
   const manualTossRef = useRef<HTMLButtonElement>(null);
   const isMobile = useMemo(() => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent), []);
   
-  // Game State
-  const [level, setLevel] = useState(1);
-  const [difficulty, setDifficulty] = useState<Difficulty>(Difficulty.NOVICE);
+  // Menu State
+  const [inMenu, setInMenu] = useState(true);
+  const [difficulty, setDifficulty] = useState<Difficulty>(Difficulty.NORMAL);
+  const [levelIndex, setLevelIndex] = useState(0);
   const [score, setScore] = useState(0);
+  const [gameOver, setGameOver] = useState(false);
   
-  const [progress, setProgress] = useState({ stage: 0, totalStages: 1 });
-  const [showOverlay, setShowOverlay] = useState(false);
-  const [overlayMsg, setOverlayMsg] = useState("");
-  const [showDifficultySelect, setShowDifficultySelect] = useState(true);
-
   const { t } = useLanguage();
-
-  const handleScoreUpdate = (points: number) => {
-      setScore(s => s + points);
-  };
 
   const startGame = (diff: Difficulty) => {
       setDifficulty(diff);
-      setShowDifficultySelect(false);
+      setInMenu(false);
+      setLevelIndex(0);
       setScore(0);
-      setLevel(1);
+      setGameOver(false);
   };
 
   const handleLevelComplete = () => {
-    setScore(s => s + 50); // Level Bonus
-    setOverlayMsg(`LEVEL ${level} CLEARED!`);
-    setShowOverlay(true);
-    setTimeout(() => {
-       if (level < 8) {
-           setLevel(l => l + 1);
-           setShowOverlay(false);
-       } else { 
-           setOverlayMsg("CHAMPION!"); 
-           // Timbang logic would go here
-       }
-    }, 2500);
-  };
-
-  const handleFail = (isFatal: boolean) => {
-      if (isFatal) {
-          setOverlayMsg("GAME OVER");
-          setShowOverlay(true);
+      // Check if next level exists
+      const maxLevels = GAME_LEVELS[difficulty].length;
+      if (levelIndex + 1 < maxLevels) {
+          setLevelIndex(prev => prev + 1);
+      } else {
+          setGameOver(true); // ��关
       }
   };
 
-  if (showDifficultySelect) {
-      return (
-          <div className="h-screen w-full bg-heritage-black flex flex-col items-center justify-center gap-6 p-6">
-              <h1 className="text-4xl text-heritage-orange font-bold">SELECT DIFFICULTY</h1>
-              <div className="flex flex-col gap-4 w-full max-w-md">
-                  <button onClick={() => startGame(Difficulty.NOVICE)} className="p-4 bg-green-600 rounded text-white font-bold">NOVICE (Easy, Retry)</button>
-                  <button onClick={() => startGame(Difficulty.NORMAL)} className="p-4 bg-yellow-600 rounded text-white font-bold">NORMAL (Classic)</button>
-                  <button onClick={() => startGame(Difficulty.MASTER)} className="p-4 bg-red-600 rounded text-white font-bold">MASTER (Hardcore)</button>
-              </div>
-          </div>
-      );
-  }
-
   return (
     <div className="h-[100dvh] w-full bg-heritage-black relative overflow-hidden">
-      <Webcam ref={webcamRef} className="absolute inset-0 w-full h-full opacity-30 object-cover" />
+      <Webcam
+        ref={webcamRef} audio={false} mirrored={true}
+        className="absolute inset-0 w-full h-full object-cover opacity-30 pointer-events-none"
+        videoConstraints={isMobile ? MOBILE_CONSTRAINTS : DESKTOP_CONSTRAINTS}
+      />
       
-      {/* Score HUD */}
-      <div className="absolute top-4 left-4 z-50 text-white font-bold text-xl">
-          SCORE: {score}
-      </div>
+      {inMenu ? (
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-heritage-black/90 p-6 space-y-6">
+              <h1 className="text-4xl text-heritage-orange font-serif font-bold">SELECT MODE</h1>
+              
+              <button onClick={() => startGame(Difficulty.NOVICE)} className="w-64 p-4 bg-green-600 rounded-xl text-white font-bold text-xl hover:scale-105 transition">
+                  NOVICE (新手)
+                  <span className="block text-xs font-normal opacity-80 mt-1">Slow • Retry • Guides</span>
+              </button>
+              
+              <button onClick={() => startGame(Difficulty.NORMAL)} className="w-64 p-4 bg-blue-600 rounded-xl text-white font-bold text-xl hover:scale-105 transition">
+                  NORMAL (普通)
+                  <span className="block text-xs font-normal opacity-80 mt-1">Standard Rules</span>
+              </button>
+              
+              <button onClick={() => startGame(Difficulty.MASTER)} className="w-64 p-4 bg-red-600 rounded-xl text-white font-bold text-xl hover:scale-105 transition border-2 border-yellow-400">
+                  MASTER (大师)
+                  <span className="block text-xs font-normal opacity-80 mt-1">Fast • One Life • Ranking</span>
+              </button>
 
-      <div className="absolute inset-0 z-10">
-        <Canvas>
-          <Suspense fallback={null}>
-             <GameScene 
-                webcamRef={webcamRef} 
-                level={level} 
-                difficulty={difficulty}
-                onProgress={setProgress} 
-                onLevelComplete={handleLevelComplete} 
-                onFail={handleFail} 
-                onScoreUpdate={handleScoreUpdate}
-                isMobile={isMobile}
-                manualTossRef={manualTossRef}
-                facingMode="user"
-             />
-          </Suspense>
-        </Canvas>
-      </div>
+              <button onClick={onExit} className="mt-8 text-white underline">Back to Home</button>
+          </div>
+      ) : (
+        <>
+            {/* HUD */}
+            <div className="absolute top-4 left-4 z-20 text-white">
+                <div className="font-bold text-heritage-orange">{difficulty} MODE</div>
+                <div className="text-xl">Level: {levelIndex + 1}</div>
+                <div className="text-2xl font-mono">Score: {score}</div>
+            </div>
 
-      <button ref={manualTossRef} className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 bg-heritage-orange text-white w-24 h-24 rounded-full border-4 border-white/20 shadow-xl font-bold">
-        TOSS
-      </button>
+            {gameOver && (
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80">
+                    <h1 className="text-5xl text-heritage-orange mb-4">GAME OVER</h1>
+                    <p className="text-2xl text-white mb-8">Final Score: {score}</p>
+                    <button onClick={() => setInMenu(true)} className="px-8 py-3 bg-white text-black font-bold rounded-full">Menu</button>
+                </div>
+            )}
 
-      {showOverlay && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80">
-          <h1 className="text-5xl text-heritage-orange font-bold">{overlayMsg}</h1>
-        </div>
+            <Canvas dpr={[1, 1]} camera={{ position: [0, 0, 8], fov: isMobile ? 75 : 50 }}>
+                <Suspense fallback={null}>
+                    <GameScene 
+                        webcamRef={webcamRef} 
+                        difficulty={difficulty} 
+                        levelIndex={levelIndex}
+                        onScoreUpdate={(pts: number) => setScore(s => s + pts)}
+                        onFail={() => {}}
+                        onLevelComplete={handleLevelComplete}
+                        isMobile={isMobile}
+                        manualTossRef={manualTossRef}
+                        facingMode="user"
+                        score={score}
+                    />
+                </Suspense>
+                <Loader />
+            </Canvas>
+
+            {/* Controls */}
+            <button 
+                ref={manualTossRef}
+                className="absolute bottom-10 left-1/2 transform -translate-x-1/2 z-50 bg-heritage-orange w-24 h-24 rounded-full border-4 border-white shadow-xl flex items-center justify-center active:scale-95"
+            >
+                <span className="font-bold text-white text-xl">TOSS</span>
+            </button>
+            
+            <button onClick={() => setInMenu(true)} className="absolute top-4 right-4 z-50 text-white border border-white/50 px-4 py-1 rounded-full text-sm">
+                Exit
+            </button>
+        </>
       )}
     </div>
   );
