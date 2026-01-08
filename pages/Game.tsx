@@ -7,6 +7,8 @@ import * as THREE from 'three';
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 import { OBJLoader } from 'three-stdlib';
 import { useLanguage } from '../context/LanguageContext';
+import { DifficultyLevel, DIFFICULTY_CONFIGS, ScoreData } from '../types';
+import DifficultySelector from '../components/DifficultySelector';
 
 // --- Configuration ---
 const MOBILE_CONSTRAINTS = {
@@ -88,6 +90,68 @@ const LEVELS: Record<number, LevelConfig> = {
       initialHandStones: 0, 
       initialGroundStones: 5 
   },
+};
+
+// Beginner Mode Levels (3 simplified levels)
+const BEGINNER_LEVELS: Record<number, LevelConfig> = {
+  1: { 
+    id: 1, 
+    name: "LEARN PICK 1", 
+    stages: [
+      { action: 'PICK', count: 1, messageKey: "msg_pick_1" }, 
+      { action: 'PICK', count: 1, messageKey: "msg_pick_1" }, 
+      { action: 'PICK', count: 1, messageKey: "msg_pick_1" }, 
+      { action: 'PICK', count: 1, messageKey: "msg_pick_1" }
+    ], 
+    gravity: -8, 
+    catchRadius: 6.0, 
+    initialHandStones: 1, 
+    initialGroundStones: 4 
+  },
+  2: { 
+    id: 2, 
+    name: "LEARN PICK 2", 
+    stages: [
+      { action: 'PICK', count: 2, messageKey: "msg_pick_2" }, 
+      { action: 'PICK', count: 2, messageKey: "msg_pick_2" }
+    ], 
+    gravity: -9, 
+    catchRadius: 5.5, 
+    initialHandStones: 1, 
+    initialGroundStones: 4 
+  },
+  3: { 
+    id: 3, 
+    name: "LEARN PICK 4", 
+    stages: [
+      { action: 'PICK', count: 4, messageKey: "msg_pick_4" }
+    ], 
+    gravity: -10, 
+    catchRadius: 5.0, 
+    initialHandStones: 1, 
+    initialGroundStones: 4 
+  }
+};
+
+// Normal Mode Levels (Buah 1-5 + simplified Buah 6 + Timbang)
+const NORMAL_LEVELS: Record<number, LevelConfig> = {
+  ...LEVELS, // Use existing levels 1-8
+};
+
+// Master Mode Levels (same as Normal but with different parameters)
+const MASTER_LEVELS: Record<number, LevelConfig> = {
+  ...LEVELS,
+};
+
+const getLevelsForDifficulty = (difficulty: DifficultyLevel): Record<number, LevelConfig> => {
+  switch (difficulty) {
+    case DifficultyLevel.BEGINNER:
+      return BEGINNER_LEVELS;
+    case DifficultyLevel.NORMAL:
+      return NORMAL_LEVELS;
+    case DifficultyLevel.MASTER:
+      return MASTER_LEVELS;
+  }
 };
 
 const useMediaPipeInput = (webcamRef: React.RefObject<Webcam>, isMobile: boolean, facingMode: string) => {
@@ -275,9 +339,23 @@ const GroundStones = ({ count, isExchangeLevel = false, pinkCount = 0 }: { count
     </group>
 );
 
-const GameScene = ({ webcamRef, level, onProgress, onLevelComplete, onFail, isMobile, manualTossRef, facingMode }: any) => {
+const GameScene = ({ 
+  webcamRef, 
+  level, 
+  difficulty = DifficultyLevel.NORMAL,
+  levels,
+  scoreData,
+  onProgress, 
+  onLevelComplete, 
+  onFail, 
+  isMobile, 
+  manualTossRef, 
+  facingMode,
+  onScoreUpdate
+}: any) => {
   const { handPos, isPinching } = useMediaPipeInput(webcamRef, isMobile, facingMode);
-  const config = LEVELS[level as number];
+  const config = levels[level as number];
+  const difficultyConfig = DIFFICULTY_CONFIGS[difficulty];
   
   const { t } = useLanguage();
   
@@ -292,6 +370,12 @@ const GameScene = ({ webcamRef, level, onProgress, onLevelComplete, onFail, isMo
   const [actionPerformed, setActionPerformed] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const [canToss, setCanToss] = useState(true);
+  
+  // Scoring state
+  const [cycleStartTime, setCycleStartTime] = useState(0);
+  const [isPerfectCycle, setIsPerfectCycle] = useState(true);
+  const [comboCount, setComboCount] = useState(0);
+  const [showSlowMotion, setShowSlowMotion] = useState(false);
 
   useEffect(() => {
     if (!hasStarted && handPos.current.y > -2.9) {
@@ -320,10 +404,16 @@ const GameScene = ({ webcamRef, level, onProgress, onLevelComplete, onFail, isMo
     if ((gameState === GameState.IDLE || gameState === GameState.HOLDING || gameState === GameState.CAUGHT) && stonesInHand > 0) {
         setStonesInHand(s => s - 1);
         setGameState(GameState.TOSSING);
-        setStoneVel(new THREE.Vector3(0, 10, 0)); 
+        
+        // Adjust toss velocity based on difficulty toss height
+        const tossVelocity = difficultyConfig.tossHeight === 'low' ? 8 : 
+                            difficultyConfig.tossHeight === 'medium' ? 10 : 12;
+        setStoneVel(new THREE.Vector3(0, tossVelocity, 0)); 
         setActionPerformed(false);
         setMessage(""); 
         setCanToss(false);
+        setCycleStartTime(Date.now());
+        setIsPerfectCycle(true);
     }
   };
 
@@ -378,7 +468,10 @@ const GameScene = ({ webcamRef, level, onProgress, onLevelComplete, onFail, isMo
 
       case GameState.TOSSING: case GameState.FALLING:
         let newVel = stoneVel.clone();
-        newVel.y += config.gravity * delta;
+        // Adjust gravity based on difficulty (slower fall for beginner)
+        const gravityMultiplier = difficulty === DifficultyLevel.BEGINNER ? 0.7 : 
+                                 difficulty === DifficultyLevel.NORMAL ? 1.0 : 1.3;
+        newVel.y += config.gravity * delta * gravityMultiplier;
         let newPos = stonePos.clone().add(newVel.clone().multiplyScalar(delta));
 
         if (newPos.x > 5) { newPos.x = 5; newVel.x *= -0.6; }
@@ -391,15 +484,72 @@ const GameScene = ({ webcamRef, level, onProgress, onLevelComplete, onFail, isMo
 
         if (newVel.y < 0) setGameState(GameState.FALLING);
 
-        if (gameState === GameState.FALLING && newPos.distanceTo(handPos.current) < config.catchRadius) {
+        // Adjust catch radius based on difficulty
+        const adjustedCatchRadius = config.catchRadius * (difficulty === DifficultyLevel.BEGINNER ? 1.2 : 
+                                                          difficulty === DifficultyLevel.NORMAL ? 1.0 : 0.85);
+
+        if (gameState === GameState.FALLING && newPos.distanceTo(handPos.current) < adjustedCatchRadius) {
            if (currentStage && !actionPerformed) {
+              // Failed to perform action
               setMessage(t('game_missed'));
+              setIsPerfectCycle(false);
+              
+              // Handle based on difficulty
+              if (difficultyConfig.allowRetry) {
+                // Beginner: retry with slow motion
+                setShowSlowMotion(true);
+                setTimeout(() => {
+                  setShowSlowMotion(false);
+                  // Reset cycle but don't end game
+                  setStonesInHand(s => s + 1);
+                  setGameState(GameState.CAUGHT);
+                  setActionPerformed(false);
+                  setMessage(t('game_retry'));
+                }, 1000);
+              } else {
+                // Normal/Master: handle failure
+                onFail();
+                if (onScoreUpdate) {
+                  onScoreUpdate({ failures: scoreData.failures + 1 });
+                }
+              }
            } else {
-              setStonesInHand(s => s + 1); 
+              // Successfully performed action
+              setStonesInHand(s => s + 1);
+              
+              // Calculate score for this cycle
+              const cycleTime = (Date.now() - cycleStartTime) / 1000;
+              const isPerfect = isPerfectCycle && cycleTime <= difficultyConfig.airWindow * 0.8;
+              
+              if (difficultyConfig.enableCombo && isPerfect) {
+                const newCombo = comboCount + 1;
+                setComboCount(newCombo);
+                if (onScoreUpdate) {
+                  onScoreUpdate({ 
+                    maxCombo: Math.max(newCombo, scoreData.maxCombo),
+                    perfectCycles: scoreData.perfectCycles + 1
+                  });
+                }
+              }
+              
               const nextStageIndex = currentStageIndex + 1;
               if (nextStageIndex >= config.stages.length) {
                 setGameState(GameState.LEVEL_COMPLETE);
                 setMessage(t('game_level_complete'));
+                
+                // Add level completion bonus
+                if (onScoreUpdate) {
+                  const baseScore = 50;
+                  const perfectBonus = isPerfect ? 10 : 0;
+                  const comboMultiplier = Math.floor(comboCount / 5) * 0.5 + 1;
+                  onScoreUpdate({
+                    baseScore: scoreData.baseScore + baseScore,
+                    perfectBonus: scoreData.perfectBonus + perfectBonus,
+                    comboMultiplier: comboMultiplier,
+                    totalScore: scoreData.totalScore + (baseScore + perfectBonus) * comboMultiplier
+                  });
+                }
+                
                 onLevelComplete();
               } else {
                 setGameState(GameState.CAUGHT);
@@ -413,18 +563,32 @@ const GameScene = ({ webcamRef, level, onProgress, onLevelComplete, onFail, isMo
         if (newPos.y < -6) {
           setGameState(GameState.DROPPED);
           setMessage(t('game_dropped'));
-          onFail();
-          setTimeout(() => {
-            const stage = config.stages[0];
-            setCurrentStageIndex(0);
-            setStonesOnGround(config.initialGroundStones);
-            setStonesInHand(config.initialHandStones);
-            setGameState(GameState.IDLE);
-            setMessage(t(stage.messageKey as any));
-            setActionPerformed(false);
-            setCanToss(true);
-            onProgress({ stage: 0, totalStages: config.stages.length });
-          }, 1500);
+          
+          if (difficultyConfig.allowRetry) {
+            // Beginner: retry without penalty
+            setTimeout(() => {
+              const stage = config.stages[currentStageIndex];
+              setStonesOnGround(config.initialGroundStones);
+              setStonesInHand(config.initialHandStones);
+              setGameState(GameState.IDLE);
+              setMessage(t('game_retry'));
+              setActionPerformed(false);
+              setCanToss(true);
+            }, 1500);
+          } else {
+            onFail();
+            setTimeout(() => {
+              const stage = config.stages[0];
+              setCurrentStageIndex(0);
+              setStonesOnGround(config.initialGroundStones);
+              setStonesInHand(config.initialHandStones);
+              setGameState(GameState.IDLE);
+              setMessage(t(stage.messageKey as any));
+              setActionPerformed(false);
+              setCanToss(true);
+              onProgress({ stage: 0, totalStages: config.stages.length });
+            }, 1500);
+          }
         }
         break;
     }
@@ -472,6 +636,20 @@ const GameScene = ({ webcamRef, level, onProgress, onLevelComplete, onFail, isMo
           {canToss ? t('game_toss_action') : t('game_wait')}
       </Text>
       <Text position={[0, textY, 0]} fontSize={isMobile ? 0.5 : 0.5} color="white" anchorX="center" anchorY="middle">{message}</Text>
+      
+      {/* Combo Counter for Master Mode */}
+      {difficultyConfig.enableCombo && comboCount > 0 && (
+        <Text position={[3, 2.5, 0]} fontSize={0.4} color="#fbbf24" anchorX="center" anchorY="middle">
+          {t('game_combo')}: x{comboCount}
+        </Text>
+      )}
+      
+      {/* Slow Motion Indicator for Beginner Mode */}
+      {showSlowMotion && (
+        <Text position={[0, 3.5, 0]} fontSize={0.3} color="#86efac" anchorX="center" anchorY="middle">
+          {t('game_slow_motion')}
+        </Text>
+      )}
     </>
   );
 };
@@ -481,6 +659,12 @@ const Game: React.FC<{ onGameOver: () => void; onExit: () => void }> = ({ onGame
   const webcamRef = useRef<Webcam>(null);
   const manualTossRef = useRef<HTMLButtonElement>(null);
   const isMobile = useMemo(() => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent), []);
+  
+  // Difficulty selection state
+  const [difficulty, setDifficulty] = useState<DifficultyLevel | null>(null);
+  const [levels, setLevels] = useState<Record<number, LevelConfig>>(NORMAL_LEVELS);
+  const [maxLevel, setMaxLevel] = useState(8);
+  
   const [level, setLevel] = useState(1);
   const [progress, setProgress] = useState({ stage: 0, totalStages: 1 });
   const [showOverlay, setShowOverlay] = useState(false);
@@ -488,11 +672,43 @@ const Game: React.FC<{ onGameOver: () => void; onExit: () => void }> = ({ onGame
   const [showChampionMenu, setShowChampionMenu] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [fitMode, setFitMode] = useState<'cover' | 'contain'>('cover');
+  
+  // Scoring state
+  const [scoreData, setScoreData] = useState<ScoreData>({
+    baseScore: 0,
+    perfectBonus: 0,
+    comboMultiplier: 1,
+    totalScore: 0,
+    failures: 0,
+    perfectCycles: 0,
+    maxCombo: 0
+  });
 
-  const currentConfig = LEVELS[level];
+  const currentConfig = levels[level];
   const progressPercent = ((progress.stage) / progress.totalStages) * 100;
   
   const { t, lang } = useLanguage();
+  
+  const handleDifficultySelect = (selectedDifficulty: DifficultyLevel) => {
+    setDifficulty(selectedDifficulty);
+    const selectedLevels = getLevelsForDifficulty(selectedDifficulty);
+    setLevels(selectedLevels);
+    setMaxLevel(Object.keys(selectedLevels).length);
+    setLevel(1);
+    setScoreData({
+      baseScore: 0,
+      perfectBonus: 0,
+      comboMultiplier: 1,
+      totalScore: 0,
+      failures: 0,
+      perfectCycles: 0,
+      maxCombo: 0
+    });
+  };
+  
+  const handleScoreUpdate = (update: Partial<ScoreData>) => {
+    setScoreData(prev => ({ ...prev, ...update }));
+  };
 
   const handleLevelComplete = () => {
     const msg = lang === 'en' 
@@ -503,7 +719,7 @@ const Game: React.FC<{ onGameOver: () => void; onExit: () => void }> = ({ onGame
     setShowOverlay(true);
     
     setTimeout(() => {
-       if (level < 8) {
+       if (level < maxLevel) {
            setLevel(l => l + 1);
            setShowOverlay(false);
        }
@@ -518,9 +734,30 @@ const Game: React.FC<{ onGameOver: () => void; onExit: () => void }> = ({ onGame
       setLevel(1);
       setShowChampionMenu(false);
       setShowOverlay(false);
+      setScoreData({
+        baseScore: 0,
+        perfectBonus: 0,
+        comboMultiplier: 1,
+        totalScore: 0,
+        failures: 0,
+        perfectCycles: 0,
+        maxCombo: 0
+      });
+  };
+  
+  const handleBackToDifficulty = () => {
+    setDifficulty(null);
+    setLevel(1);
+    setShowOverlay(false);
+    setShowChampionMenu(false);
   };
 
   const videoConstraints = isMobile ? MOBILE_CONSTRAINTS : DESKTOP_CONSTRAINTS;
+  
+  // Show difficulty selector if no difficulty selected
+  if (!difficulty) {
+    return <DifficultySelector onSelect={handleDifficultySelect} onBack={onExit} />;
+  }
 
   return (
     <div className="h-[100dvh] w-full bg-heritage-black relative overflow-hidden">
@@ -537,13 +774,17 @@ const Game: React.FC<{ onGameOver: () => void; onExit: () => void }> = ({ onGame
           <Suspense fallback={null}>
              <GameScene 
                 webcamRef={webcamRef} 
-                level={level} 
+                level={level}
+                difficulty={difficulty}
+                levels={levels}
+                scoreData={scoreData}
                 onProgress={setProgress} 
                 onLevelComplete={handleLevelComplete} 
                 onFail={() => {}} 
                 isMobile={isMobile}
                 manualTossRef={manualTossRef}
                 facingMode={facingMode}
+                onScoreUpdate={handleScoreUpdate}
              />
           </Suspense>
         </Canvas>
@@ -572,11 +813,24 @@ const Game: React.FC<{ onGameOver: () => void; onExit: () => void }> = ({ onGame
       </div>
 
       <button 
-        onClick={onExit} 
+        onClick={handleBackToDifficulty} 
         className="fixed top-6 right-6 z-50 bg-transparent border-2 border-white/50 text-white px-6 py-2 rounded-full hover:bg-white/10 hover:border-white transition-all text-xs font-bold tracking-widest shadow-lg flex items-center gap-2"
       >
         {t('game_exit_game')}
       </button>
+      
+      {/* Score Display - Master Mode */}
+      {difficulty === DifficultyLevel.MASTER && (
+        <div className="fixed top-24 right-6 z-50 bg-heritage-black/80 border border-heritage-orange/50 p-3 rounded-lg backdrop-blur-md shadow-lg">
+          <div className="text-heritage-orange text-xs font-bold mb-1">{t('score_total')}</div>
+          <div className="text-white text-2xl font-bold">{scoreData.totalScore}</div>
+          {scoreData.maxCombo > 0 && (
+            <div className="text-yellow-400 text-xs mt-1">
+              {t('game_combo')}: x{scoreData.maxCombo}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="absolute bottom-6 left-6 z-50">
         <button onClick={() => setFitMode(prev => prev === 'cover' ? 'contain' : 'cover')} className="bg-black/60 text-white w-12 h-12 rounded-full border border-white/20 hover:bg-heritage-orange transition-colors flex items-center justify-center">
