@@ -1,0 +1,8 @@
+{
+  "name": "Batu Seremban AR Guide / NEW",
+  "description": "for TCS Proj",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
