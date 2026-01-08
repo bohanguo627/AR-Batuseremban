@@ -1,12 +1,15 @@
 export enum GameState {
+  MENU = 'MENU',
+  SETUP = 'SETUP',
   IDLE = 'IDLE',
   TOSSING = 'TOSSING',
-  FALLING = 'FALLING',
+  ACTION_WINDOW = 'ACTION_WINDOW', // 空中操作时间窗
   CAUGHT = 'CAUGHT',
   DROPPED = 'DROPPED',
   LEVEL_COMPLETE = 'LEVEL_COMPLETE',
   GAME_OVER = 'GAME_OVER',
-  TIMBANG = 'TIMBANG' // 新增称重环节状态
+  TIMBANG = 'TIMBANG', // 称重环节
+  SUMMARY = 'SUMMARY'
 }
 
 export enum Difficulty {
@@ -15,15 +18,29 @@ export enum Difficulty {
   MASTER = 'MASTER'
 }
 
-export enum Level {
-  ONE = 1,
-  TWO = 2,
-  THREE = 3,
-  FOUR = 4,
-  FIVE = 5,
-  SIX = 6,
-  SEVEN = 7,
-  EIGHT = 8
+export interface DifficultyConfig {
+  airWindow: number; // 秒 (2.5, 1.6, 1.1)
+  gravity: number;   // 视觉重力加速度 (-10, -15, -20)
+  autoScatter: boolean; // 是否自动分散摆放
+  failConsequence: 'RETRY_CYCLE' | 'RESTART_LEVEL' | 'GAME_OVER';
+  showGuideLines: boolean; // 是否显示引导线
+  comboMultiplier: boolean; // 是否开启连击倍率
+  allowCorrection: boolean; // 是否允许误触纠正
+}
+
+export interface StageConfig {
+  action: 'PICK' | 'PLACE' | 'EXCHANGE';
+  count: number; // 本次动作需要操作的数量
+  messageKey: string;
+}
+
+export interface LevelConfig {
+  id: number;
+  name: string;
+  stages: StageConfig[]; // 一个关卡内的多个 Cycle
+  initialHandStones: number;
+  initialGroundStones: number;
+  isExchangeLevel?: boolean; // 用于 Buah 6 / Tukar
 }
 
 export interface TeamMember {
@@ -41,7 +58,7 @@ export interface ChatMessage {
   followUpQuestions?: string[];
 }
 
-// ... (保持 TEAM_MEMBERS 不变)
+// 队伍成员数据
 export const TEAM_MEMBERS: TeamMember[] = [
   { name: "Gan Shu Xian", role: "Project Director", matric: "24004577" },
   { name: "Natasya Beatrisya", role: "AR Development Lead", matric: "23002630" },
